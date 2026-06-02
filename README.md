@@ -1,124 +1,260 @@
 ![GDS Badge](../../workflows/gds/badge.svg)
 ![Docs Badge](../../workflows/docs/badge.svg)
 ![Test Badge](../../workflows/test/badge.svg)
+![FPGA Badge](../../workflows/fpga/badge.svg)
+
 # TinyTapeout SPI Microcoded CPU
 
-A tiny **4-bit CPU** for **TinyTapeout (GF180MCU)** that executes its program from **external SPI RAM**. In the current demo, the microcode implements a **4x4-bit to 8-bit multiplier**, where the two 4-bit operands come in through `ui_in` and the 8-bit product is driven on `uo_out`.
+A compact **4-bit microcoded CPU** designed for **TinyTapeout (GF180MCU)**. Unlike traditional embedded CPUs, this design fetches and executes its program directly from **external SPI RAM**.
 
-- `ui_in[7:4] = A`
-- `ui_in[3:0] = B`
-- `uo_out[7:0] = A x B`
+The current demonstration program implements a **4×4-bit multiplier**, where the operands are supplied through `ui_in` and the resulting 8-bit product is presented on `uo_out`.
 
-More detailed design notes are provided in [`docs/info.md`](docs/info.md).
+## Quick Start
 
-## Project summary
+### Inputs
 
-This project explores a small microcoded CPU architecture suitable for TinyTapeout-style experiments with simple datapaths, external program storage, and SPI-based instruction fetch.
+| Signal | Description |
+|----------|-------------|
+| `ui_in[7:4]` | Operand A (4-bit) |
+| `ui_in[3:0]` | Operand B (4-bit) |
 
-The CPU does not store its program internally. Instead, it reads instruction bytes from an external SPI memory device. In the current demo setup, that external device can be emulated by a microcontroller such as an RP2040 behaving like a simple SPI RAM.
+### Output
 
-## Demo behavior
-
-The current microcode image is written to perform multiplication of two 4-bit operands:
-
-- Operand `A` is provided on `ui_in[7:4]`
-- Operand `B` is provided on `ui_in[3:0]`
-- The 8-bit product is returned on `uo_out[7:0]`
+| Signal | Description |
+|----------|-------------|
+| `uo_out[7:0]` | Product (`A × B`) |
 
 Example:
 
-- If `A = 4'b0011` and `B = 4'b0101`, then `uo_out = 8'b00001111`
+```text
+A = 7
+B = 9
 
-## Architecture overview
+uo_out = 63
+```
 
-The design is split into three main blocks:
+---
 
-1. **TinyTapeout wrapper**: `tt_um_spi_cpu_top`
-2. **CPU wrapper + SPI fetch logic**: `spi_wrap`
-3. **Execution datapath**: `ExecutionUnit`
+## Features
 
-### 1. TinyTapeout wrapper
+- 4-bit microcoded CPU
+- External SPI RAM program storage
+- 16-instruction ISA
+- Arithmetic and logic operations
+- Shift-register based operations
+- TinyTapeout compatible top-level wrapper
+- Fully synthesizable Verilog RTL
+- Cocotb and Verilog testbenches
 
-The top-level module connects the TinyTapeout pad interface to the internal CPU and the external SPI-facing signals. It accepts the two 4-bit input operands on `ui_in`, returns the 8-bit result on `uo_out`, and routes SPI-related signals through the `uio_*` pins.
+---
 
-### 2. SPI fetch wrapper
+## Architecture
 
-`spi_wrap` is responsible for program sequencing and SPI fetch control. It contains:
+The design consists of three primary blocks:
 
-- The program counter
-- A small instruction-fetch state machine
-- A byte-oriented SPI read engine
-- The control interface to the execution unit
+```text
+tt_um_spi_cpu_top
+├── spi_wrap
+│   ├── spi_read_byte
+│   └── ExecutionUnit
+│       ├── InstructionDecoder
+│       ├── RegisterFile
+│       ├── ShiftRegister
+│       ├── ArithmeticLogicUnit
+│       └── Accumulator
+```
 
-Each SPI byte contains **two 4-bit micro-operations**:
+### Top-Level Wrapper
 
-- Lower nibble executes first
-- Upper nibble executes second
-- The program counter then advances to the next byte
+`tt_um_spi_cpu_top`
 
-### 3. Execution datapath
+Responsibilities:
 
-`ExecutionUnit` contains the internal data path and control logic used to execute the micro-operations. At a high level, it includes:
+- TinyTapeout I/O integration
+- SPI signal routing
+- Operand input interface
+- Output register interface
 
-- A, B, and O registers
-- An 8-bit accumulator
-- A shift register and associated status/flag logic
-- A small ALU
-- Decode/control logic
+### SPI Fetch Wrapper
 
-The instruction set is intentionally compact and is designed to be sufficient for simple arithmetic, logical, load, and shift operations needed by the multiplication demo.
+`spi_wrap`
 
-## Execution flow
+Responsibilities:
 
-At a high level, execution proceeds as follows:
+- Program Counter (PC)
+- Instruction fetch FSM
+- SPI read engine
+- Instruction sequencing
 
-1. Reset initializes the control logic and program counter.
-2. The CPU issues an SPI read for the current program byte.
-3. The lower 4-bit micro-operation is decoded and executed.
-4. The upper 4-bit micro-operation is decoded and executed.
-5. The program counter increments.
-6. The sequence repeats until the programmed operation completes.
+Each byte fetched from SPI memory contains two instructions:
 
-## Pin mapping
+```text
++--------+--------+
+| Opcode | Opcode |
++--------+--------+
+ High      Low
+Nibble    Nibble
+```
 
-> Replace any placeholder signal names below with the exact names used in your RTL.
+The CPU executes the low-level micro-operations sequentially before advancing to the next memory byte.
+
+### Execution Unit
+
+The execution datapath contains:
+
+- 4-bit Register A
+- 4-bit Register B
+- 8-bit Output Register O
+- 8-bit Shift Register
+- 8-bit Accumulator (ACC)
+- Arithmetic Logic Unit (ALU)
+- Instruction Decoder
+
+---
+
+## Instruction Set
+
+| Opcode | Mnemonic | Description |
+|----------|----------|-------------|
+| `0000` | LDA  | Load operand A |
+| `0001` | LDB  | Load operand B |
+| `0010` | LDO  | Load output register |
+| `0011` | LDSA | Load shift register from A |
+| `0100` | LDSB | Load shift register from B |
+| `0101` | LSH  | Shift left |
+| `0110` | RSH  | Shift right |
+| `0111` | CLR  | Clear accumulator |
+| `1000` | SNZA | Skip if A equals zero |
+| `1001` | SNZS | Skip if shift flag set |
+| `1010` | ADD  | Addition |
+| `1011` | SUB  | Subtraction |
+| `1100` | AND  | Bitwise AND |
+| `1101` | OR   | Bitwise OR |
+| `1110` | XOR  | Bitwise XOR |
+| `1111` | INV  | Bitwise inversion |
+
+---
+
+## Program Memory
+
+The CPU fetches instructions from external SPI RAM using:
+
+```text
+READ Command : 0x03
+Address Width: 16-bit
+SPI Mode     : 0
+Data Width   : 8-bit
+```
+
+Program memory capacity:
+
+```text
+4096 bytes
+8192 instructions
+```
+
+The program counter directly maps to the lower 12 bits of the SPI address space.
+
+---
+
+## SPI Interface
 
 | Signal | Direction | Description |
-|---|---|---|
-| `ui_in[7:4]` | Input | 4-bit operand A |
-| `ui_in[3:0]` | Input | 4-bit operand B |
-| `uo_out[7:0]` | Output | 8-bit result output |
-| `uio_in[...]` | Input | SPI input-side signals from external memory model |
-| `uio_out[...]` | Output | SPI output-side signals to external memory model |
-| `uio_oe[...]` | Output | Output-enable control for bidirectional user IO pins |
+|----------|----------|-------------|
+| CS_n | Output | Chip Select |
+| MOSI | Output | Master Out Slave In |
+| MISO | Input | Master In Slave Out |
+| SCK | Output | SPI Clock |
 
-If you have fixed signal assignments for SPI, expand this section with explicit names such as chip select, serial clock, MOSI, and MISO.
+### TinyTapeout Mapping
 
-## Repository structure
+| Signal | Pin |
+|----------|-----|
+| CS_n | `uio_out[0]` |
+| MOSI | `uio_out[1]` |
+| MISO | `uio_in[2]` |
+| SCK | `uio_out[3]` |
 
-- `src/` - Verilog source files for the TinyTapeout wrapper, SPI wrapper, and execution unit
-- `test/` - Testbench and verification files
-- `docs/` - Additional project documentation
-- `info.yaml` - TinyTapeout project metadata
-- `README.md` - Front-page overview of the project
+---
 
-## Current limitations
+## Top-Level I/O
 
-This repository currently demonstrates a specific microcoded multiply use case rather than a general-purpose programmable CPU environment.
+| Port | Direction | Width | Description |
+|--------|-----------|--------|-------------|
+| `ui_in` | Input | 8 | Operand input bus |
+| `uo_out` | Output | 8 | Output register |
+| `uio_in` | Input | 8 | SPI input signals |
+| `uio_out` | Output | 8 | SPI output signals |
+| `uio_oe` | Output | 8 | Output enables |
+| `clk` | Input | 1 | System clock |
+| `rst_n` | Input | 1 | Active-low reset |
+| `ena` | Input | 1 | Chip enable |
 
-Known limitations include:
+---
 
-- Program storage is external and depends on an SPI memory model
-- Public documentation does not yet include a full opcode table
-- Public documentation does not yet include a complete signal-level SPI interface description
-- The current demo is focused on 4-bit multiplication rather than a broader instruction-programming workflow
+## Testing
 
-## Next steps
+### Cocotb Tests
 
-Planned or recommended improvements:
+- Multiplication verification
+- SPI activity verification
+- Reset recovery verification
+- I/O mapping verification
+- ALU unit tests
+- Instruction decoder tests
 
-- Publish the full micro-instruction encoding
-- Document exact SPI signal mapping and timing
-- Add a worked multiply example with state progression
-- Summarize verification coverage in the documentation
-- Extend the microcode and datapath for additional arithmetic operations
+Run all tests:
+
+```bash
+make
+```
+
+Run an individual Verilog testbench:
+
+```bash
+iverilog -o tb_spi_read_byte.vvp \
+tb_spi_read_byte.v \
+spi_read_byte.v \
+spi_ram_model.v
+
+vvp tb_spi_read_byte.vvp
+```
+
+---
+
+## Known Limitations
+
+### Conditional Skip Instructions
+
+`SNZA` and `SNZS` are currently non-functional.
+
+The present implementation performs an additional ALU operation instead of modifying instruction flow. This limitation does not affect the supplied multiplication microprogram.
+
+### No HALT Instruction
+
+The CPU continuously fetches and executes instructions.
+
+### SPI Clocking
+
+The SPI master currently operates directly from the system clock. A divider may be required for real external memory devices.
+
+---
+
+## Current Demonstration
+
+The included microcode implements a shift-and-add multiplier:
+
+```text
+Input:
+  A = ui_in[7:4]
+  B = ui_in[3:0]
+
+Output:
+  uo_out = A × B
+```
+
+---
+
+## License
+
+See the repository license file for licensing information.
